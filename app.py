@@ -119,23 +119,33 @@ class BrandKeywordRanker:
 # Streamlit UI
 st.title("Unified Brand–Topic Authority Scorer")
 
-st.text_input("Brands (comma-separated)", "Nike, Adidas")
-st.text_input("Keywords (comma-separated)", "new trainers")
+brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma", key="brands")
+keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, air max plus, ice creams, call of duty", key="keywords")
 use_pop = st.checkbox("Include popularity signal", False)
-embed_w, pop_w, llm_w = st.slider("Embedding weight",0,1,0.4), st.slider("Popularity weight",0,1,0.1), st.slider("LLM weight",0,1,0.5)
+embed_w = st.slider("Embedding weight", 0.0, 1.0, 0.4)
+pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.1)
+llm_w = st.slider("LLM weight", 0.0, 1.0, 0.5)
+
 if st.button("Score"):
-    brands = [b.strip() for b in st.session_state['Brands (comma-separated)'].split(',')]
-    kws = [k.strip() for k in st.session_state['Keywords (comma-separated)'].split(',')]
-    rk = BrandKeywordRanker(embed_w, pop_w, llm_w, use_pop)
-    rows=[]
-    for b in brands:
-        for k in kws:
-            r=rk.score(b,k)
-            rows.append({
-                'Brand':b,'Keyword':k,
-                'Sim(0-100)':f"{r['embed_similarity']:.1f}",
-                'Pop(0-100)':f"{r['popularity']:.1f}",
-                'GeminiLLM':f"{r['llm_gemini']:.1f}",
-                'GPT4oLLM':f"{r['llm_gpt4o']:.1f}",
-                'Final':f"{r['combined']:.1f}"})
-    st.dataframe(pd.DataFrame(rows))
+    # Parse inputs
+    brands = [b.strip() for b in brands_input.split(',') if b.strip()]
+    kws = [k.strip() for k in keywords_input.split(',') if k.strip()]
+    if not brands or not kws:
+        st.warning("Please enter at least one brand and one keyword.")
+    else:
+        rk = BrandKeywordRanker(embed_w, pop_w, llm_w, use_pop)
+        rows = []
+        for b in brands:
+            for k in kws:
+                r = rk.score(b, k)
+                rows.append({
+                    'Brand': b,
+                    'Keyword': k,
+                    'Sim(0-100)': f"{r['embed_similarity']:.1f}",
+                    'Pop(0-100)': f"{r['popularity']:.1f}",
+                    'GeminiLLM': f"{r['llm_gemini']:.1f}",
+                    'GPT4oLLM': f"{r['llm_gpt4o']:.1f}",
+                    'Final': f"{r['combined']:.1f}"
+                })
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
