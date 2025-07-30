@@ -1,5 +1,6 @@
-numpy
-openai
 streamlit
+openai
+numpy
+pandas
 wikipedia
 pytrends
