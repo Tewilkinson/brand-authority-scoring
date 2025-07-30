@@ -13,7 +13,11 @@ try:
 except ImportError:
     WIKIPEDIA_AVAILABLE = False
 
-from pytrends.request import TrendReq  # For Google Trends
+try:
+    from pytrends.request import TrendReq  # For Google Trends
+    TRENDS_AVAILABLE = True
+except ImportError:
+    TRENDS_AVAILABLE = False
 
 # Configuration
 API_KEY = os.getenv('OPENAI_API_KEY')
@@ -73,8 +77,11 @@ class BrandKeywordRanker:
 
     def _popularity(self, brand: str, keyword: str) -> float:
         """
-        Uses PyTrends to fetch normalized interest (0-1) for 'brand keyword'.
+        Uses Google Trends (PyTrends) to fetch normalized interest (0-1) for 'brand keyword'.
+        Requires PyTrends to be installed.
         """
+        if not TRENDS_AVAILABLE or not self.use_popularity:
+            return 0.0
         try:
             pytrends = TrendReq(hl='en-US', tz=0)
             term = f"{brand} {keyword}"
@@ -82,6 +89,9 @@ class BrandKeywordRanker:
             df = pytrends.interest_over_time()
             if df.empty:
                 return 0.0
+            return float(df[term].iloc[-1]) / 100.0
+        except Exception:
+            return 0.0
             return float(df[term].iloc[-1]) / 100.0
         except Exception:
             return 0.0
