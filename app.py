@@ -5,12 +5,15 @@ import streamlit as st
 from openai import OpenAI
 from typing import Optional
 
-# Optional: pip install wikipedia
+# Optional dependencies
+# pip install wikipedia pytrends
 try:
     import wikipedia
     WIKIPEDIA_AVAILABLE = True
 except ImportError:
     WIKIPEDIA_AVAILABLE = False
+
+from pytrends.request import TrendReq  # For Google Trends
 
 # Configuration
 API_KEY = os.getenv('OPENAI_API_KEY')
@@ -23,10 +26,11 @@ client = OpenAI(api_key=API_KEY)
 
 class BrandKeywordRanker:
     """
-    Computes a combined relevance score by blending:
-      • Embedding similarity (via text-embedding-ada-002)
-      • Optional popularity signal
-      • LLM-driven relevance from GPT-4 and GPT-3.5-turbo
+    Computes robust relevance by:
+      1) Embedding similarity between keyword and full brand wiki content
+      2) Boost if keyword string appears in the wiki text
+      3) Optional Google Trends popularity
+      4) LLM scoring from GPT-4 and GPT-3.5
     """
     def __init__(
         self,
@@ -41,17 +45,21 @@ class BrandKeywordRanker:
         self.llm_w = llm_weight / total
         self.use_popularity = use_popularity
 
-    def _get_wiki(self, brand: str) -> str:
+    def _get_full_wiki(self, brand: str) -> str:
+        """
+        Fetches full Wikipedia page content for richer context.
+        """
         if not WIKIPEDIA_AVAILABLE:
             return brand
         try:
-            return wikipedia.summary(brand, sentences=2)
+            page = wikipedia.page(brand, auto_suggest=False)
+            return page.content
         except Exception:
             return brand
 
     def _embed(self, text: str) -> np.ndarray:
         """
-        Compute embedding with Ada-002.
+        Embeds text with Ada-002 and returns numpy vector.
         """
         resp = client.embeddings.create(
             model="text-embedding-ada-002",
@@ -64,20 +72,32 @@ class BrandKeywordRanker:
         return float(np.dot(a, b) / denom) if denom else 0.0
 
     def _popularity(self, brand: str, keyword: str) -> float:
-        # Placeholder for real SEO/Gemini analytics
-        return 1.0
+        """
+        Uses PyTrends to fetch normalized interest (0-1) for 'brand keyword'.
+        """
+        try:
+            pytrends = TrendReq(hl='en-US', tz=0)
+            term = f"{brand} {keyword}"
+            pytrends.build_payload([term], timeframe='today 12-m')
+            df = pytrends.interest_over_time()
+            if df.empty:
+                return 0.0
+            return float(df[term].iloc[-1]) / 100.0
+        except Exception:
+            return 0.0
 
     def _llm_score(self, model: str, brand: str, keyword: str) -> float:
         """
-        Query LLM for numeric relevance 0–100. Fallback sequence on error.
+        Queries LLM to rate 0-100 relevance of brand to keyword.
         """
+        prompt = f"Rate relevance (0-100) of brand '{brand}' to topic '{keyword}'. Reply with just the integer." 
         try:
             resp = client.chat.completions.create(
                 model=model,
                 temperature=0.2,
                 messages=[
-                    {"role": "system", "content": "You are a relevance scoring assistant."},
-                    {"role": "user", "content": f"Rate relevance (0-100) of brand '{brand}' to topic '{keyword}'. Reply with just the integer."}
+                    {"role":"system","content":"You are a precise scoring assistant."},
+                    {"role":"user","content":prompt}
                 ]
             )
             return float(resp.choices[0].message.content.strip())
@@ -85,35 +105,42 @@ class BrandKeywordRanker:
             return 0.0
 
     def score(self, brand: str, keyword: str) -> dict:
-        # Build brand context
-        profile = self._get_wiki(brand)
-        # Embedding similarity
-        emb_brand = np.mean([self._embed(brand), self._embed(profile)], axis=0)
+        # 1) Full wiki context embedding
+        wiki_text = self._get_full_wiki(brand)
+        emb_brand = self._embed(wiki_text)
         emb_kw = self._embed(keyword)
         sim_score = self._cosine(emb_brand, emb_kw) * 100
-        # Popularity
+        # Boost if exact keyword string appears in wiki
+        if keyword.lower() in wiki_text.lower():
+            sim_score = max(sim_score, 50)  # ensure at least a mid-level score
+
+        # 2) Popularity
         pop_score = self._popularity(brand, keyword) * 100 if self.use_popularity else 0
-        # LLM relevance
+
+        # 3) LLMs
         g4 = self._llm_score("gpt-4", brand, keyword)
         g35 = self._llm_score("gpt-3.5-turbo", brand, keyword)
         llm_score = (g4 + g35) / 2
-        # Combine
+
+        # 4) Combine
         combined = sim_score * self.embed_w + pop_score * self.pop_w + llm_score * self.llm_w
         combined = max(0, min(combined, 100))
+
         return {
-            'similarity': sim_score,
+            'semantic': sim_score,
             'popularity': pop_score,
             'gpt4': g4,
-            'gpt3.5': g35,
+            'gpt35': g35,
             'combined': combined
         }
 
 # Streamlit UI
 st.title("Brand vs. Topic Authority Scorer")
 
+st.markdown("**Note:** Relevance uses full Wikipedia content + embeddings; popularity via free Google Trends.")
 brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
-keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, air max plus")
-use_pop = st.checkbox("Include popularity", False)
+keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, ice cream, photography")
+use_pop = st.checkbox("Include Google Trends popularity", False)
 embed_w = st.slider("Embedding weight", 0.0, 1.0, 0.4)
 pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.1)
 llm_w = st.slider("LLM weight", 0.0, 1.0, 0.5)
@@ -132,10 +159,10 @@ if st.button("Compute Scores"):
                 rows.append({
                     'Brand': b,
                     'Keyword': k,
-                    'Similarity': f"{res['similarity']:.1f}",
-                    'Popularity': f"{res['popularity']:.1f}",
+                    'Semantic (0-100)': f"{res['semantic']:.1f}",
+                    'Popularity (0-100)': f"{res['popularity']:.1f}",
                     'GPT-4': f"{res['gpt4']:.1f}",
-                    'GPT-3.5': f"{res['gpt3.5']:.1f}",
-                    'Combined': f"{res['combined']:.1f}"  
+                    'GPT-3.5': f"{res['gpt35']:.1f}",
+                    'Combined (0-100)': f"{res['combined']:.1f}"  
                 })
         st.dataframe(pd.DataFrame(rows))
