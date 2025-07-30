@@ -99,4 +99,23 @@ if st.button("Compute Relevance Scores"):
             for keyword in keywords:
                 results.append(scorer.score(brand, keyword))
         df = pd.DataFrame(results)
-        st.dataframe(df)
+        # 1️⃣ Overall Relevance Bar Chart
+st.subheader("Overall Relevance Scores per Brand–Keyword Pair")
+df['Brand + Keyword'] = df['Brand'] + ' — ' + df['Keyword']
+st.bar_chart(df.set_index('Brand + Keyword')['Combined (0-100)'])
+
+# 2️⃣ Individual Prompt Charts
+for keyword in keywords:
+    st.markdown(f"---")
+    st.subheader(f"Prompt and Scores for '{keyword}'")
+    # Show the exact prompt template
+    sample_prompt = (
+        f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
+    )
+    st.markdown(f"**Prompt Template:** `{sample_prompt}`")
+    # Bar chart of combined scores for this specific keyword
+    subdf = df[df['Keyword'] == keyword]
+    if not subdf.empty:
+        st.bar_chart(subdf.set_index('Brand')['Combined (0-100)'])
+    else:
+        st.write("No scores available for this keyword.")
