@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
+import wikipedia  # pip install wikipedia
 
 # Configuration: Set your OpenAI API key in the environment
 oai_key = os.getenv('OPENAI_API_KEY')
@@ -15,38 +16,23 @@ client = OpenAI(api_key=oai_key)
 
 class BrandKeywordRanker:
     """
-    Computes a topical authority / ease-of-rank score (0-100)
-    for given brand(s) and keyword(s) using semantic similarity,
-    popularity signals, brand-model heuristics, and optional category gating.
+    Dynamically gathers brand context from Wikipedia (and optionally a Knowledge Graph),
+    embeds both brand profile and keywords, and computes a robust topical authority score.
     """
     def __init__(self, similarity_weight: float = 0.8, popularity_weight: float = 0.2):
-        # Normalize weights to sum to 1
         total = similarity_weight + popularity_weight
         self.sim_w = similarity_weight / total
         self.pop_w = popularity_weight / total
 
-        # Known product lines per brand for heuristic penalization
-        self.product_lines = {
-            'nike': ['air max', 'air force', 'dunk', 'jersey', 'swoosh'],
-            'adidas': ['ultraboost', 'stan smith', 'nmd', 'adilette'],
-            'puma': ['suede', 'rs', 'basket'],
-            'solero': ['ice cream', 'gelato', 'sorbet'],
-            'playstation': ['playstation', 'ps5', 'ps4', 'ps'],  # brand tokens for embedding
-        }
-        # Map brands to their primary category
-        self.brand_categories = {
-            'nike': 'trainers',
-            'adidas': 'trainers',
-            'puma': 'trainers',
-            'solero': 'ice creams',
-            'playstation': 'gaming',
-        }
-        # Simple keyword category detection by keyword tokens
-        self.keyword_categories = {
-            'trainers': ['trainer', 'trainers', 'air max', 'sneaker', 'sneakers', 'dunk'],
-            'ice creams': ['ice cream', 'gelato', 'sorbet'],
-            'gaming': ['playstation', 'xbox', 'gaming', 'call of duty', 'fortnite', 'lol']
-        }
+    def _get_brand_profile(self, brand: str) -> str:
+        """
+        Fetch a brief summary of the brand from Wikipedia.
+        Fallbacks to brand name if lookup fails.
+        """
+        try:
+            return wikipedia.summary(brand, sentences=2)
+        except Exception:
+            return brand
 
     def _get_embedding(self, text: str) -> np.ndarray:
         resp = client.embeddings.create(
@@ -55,85 +41,76 @@ class BrandKeywordRanker:
         )
         return np.array(resp.data[0].embedding)
 
+    def _combine_embeddings(self, embeddings: list) -> np.ndarray:
+        """
+        Averages a list of embeddings into a single vector.
+        """
+        return np.mean(np.vstack(embeddings), axis=0)
+
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-    def _detect_keyword_category(self, keyword: str) -> str:
-        """
-        Return the detected category for a keyword, or None if unknown.
-        """
-        kl = keyword.lower()
-        for cat, tokens in self.keyword_categories.items():
-            if any(tok in kl for tok in tokens):
-                return cat
-        return None
-
     def _fetch_popularity_score(self, keyword: str, brand: str) -> float:
-        # TODO: integrate with a real SEO/popularity API
+        """
+        Placeholder for search-volume or Trends-based popularity.
+        TODO: integrate with real SEO API or Gemini predictions.
+        """
         return 1.0
 
     def score(self, brand: str, keyword: str) -> dict:
-        # Normalize brand key
-        bk = brand.lower().strip()
-        # Detect categories
-        brand_cat = self.brand_categories.get(bk)
-        kw_cat = self._detect_keyword_category(keyword)
-        # If both categories known and mismatch, return zeros
-        if brand_cat and kw_cat and (brand_cat != kw_cat):
-            return {'similarity': 0.0, 'popularity': 0.0, 'score': 0.0}
-        # Compute embeddings and semantic similarity
-        emb_brand = self._get_embedding(brand)
+        # Build brand profile
+        profile = self._get_brand_profile(brand)
+        # Embed brand name + profile summary
+        emb_brand_name = self._get_embedding(brand)
+        emb_brand_profile = self._get_embedding(profile)
+        emb_brand = self._combine_embeddings([emb_brand_name, emb_brand_profile])
+
+        # Embed keyword
         emb_kw = self._get_embedding(keyword)
+        # Compute semantic similarity
         sim = self._cosine_similarity(emb_brand, emb_kw)
-
-        # Heuristic: penalize if specific model keyword not in brand's product lines
-        models = self.product_lines.get(bk)
-        if models and not any(m in keyword.lower() for m in models):
-            sim *= 0.5
-
         # Popularity signal
         pop = self._fetch_popularity_score(keyword, brand)
-
         # Weighted combination
         combined = sim * self.sim_w + pop * self.pop_w
         final = min(combined, 1.0) * 100
         return {'similarity': sim, 'popularity': pop, 'score': final}
 
 # ----- Streamlit UI ----- #
-st.title("Brand vs. Keyword Topical Authority Scorer")
+st.title("Dynamic Brand vs. Keyword Authority Scorer")
 
-st.markdown("**Enter multiple brands and keywords (comma-separated):**")
-brands_input = st.text_area("Brands", value="Nike, Adidas, Puma, Solero, PlayStation")
+st.markdown("Enter brands & keywords (comma-separated). Scores use live Wikipedia context and OpenAI embeddings.")
+brands_input = st.text_area("Brands", value="Nike, Adidas, Puma, Solero, PlayStation, Activision")
 keywords_input = st.text_area("Keywords/Topics", value="new trainers, air max plus, ice creams, call of duty")
 
-# Weights configuration
 sim_w = st.slider("Similarity weight", 0.0, 1.0, 0.8)
 pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.2)
 
 if st.button("Compute Scores"):
     brands = [b.strip() for b in brands_input.split(',') if b.strip()]
     keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
-    if not brands or not keywords:
-        st.warning("Please enter at least one brand and one keyword.")
-    else:
-        ranker = BrandKeywordRanker(similarity_weight=sim_w, popularity_weight=pop_w)
-        rows = []
-        for brand in brands:
-            for keyword in keywords:
-                result = ranker.score(brand, keyword)
-                rows.append({
-                    'Brand': brand,
-                    'Keyword': keyword,
-                    'Semantic Similarity': f"{result['similarity']:.3f}",
-                    'Popularity Signal': f"{result['popularity']:.3f}",
-                    'Topical Authority Score': f"{result['score']:.1f}"
-                })
-        df = pd.DataFrame(rows)
-        st.dataframe(df)
+    ranker = BrandKeywordRanker(similarity_weight=sim_w, popularity_weight=pop_w)
+
+    results = []
+    for brand in brands:
+        for keyword in keywords:
+            res = ranker.score(brand, keyword)
+            results.append({
+                'Brand': brand,
+                'Keyword': keyword,
+                'Semantic Similarity': f"{res['similarity']:.3f}",
+                'Popularity Signal': f"{res['popularity']:.3f}",
+                'Topical Authority Score': f"{res['score']:.1f}"
+            })
+    df = pd.DataFrame(results)
+    st.dataframe(df)
 
 st.markdown("---")
 st.markdown(
-    "- Returns 0 when categories are explicitly conflicting (e.g. trainers vs. ice creams).\n"
-    "- Falls back to pure embedding similarity when categories are unknown or match.\n"
-    "- Applies model-level penalties only when brand product line is defined."
+    "**How it works:**\n"
+    "- Pulls the first two sentences of each brand's Wikipedia page as a profile.\n"
+    "- Embeds both brand name & profile, averaging them into a unified vector.\n"
+    "- Embeds the keyword and measures cosine similarity.\n"
+    "- (Optional) Layer in real search-volume signals via SEO/Gemini APIs.\n"
+    "- Outputs a normalized 0–100 topical authority score."
 )
