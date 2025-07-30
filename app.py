@@ -1,20 +1,23 @@
 import os
 import numpy as np
-import openai
 import pandas as pd
 import streamlit as st
+from openai import OpenAI
 
 # Configuration: Set your OpenAI API key in the environment
 oai_key = os.getenv('OPENAI_API_KEY')
 if not oai_key:
     st.error("Please set the OPENAI_API_KEY environment variable.")
     st.stop()
-openai.api_key = oai_key
+
+# Initialize the OpenAI client
+client = OpenAI(api_key=oai_key)
 
 class BrandKeywordRanker:
     """
     Computes a topical authority / ease-of-rank score (0-100)
-    for a given brand and keyword/topic using semantic similarity and popularity signals.
+    for given brand(s) and keyword(s) using semantic similarity
+    and popularity signals.
     """
     def __init__(self, similarity_weight: float = 0.8, popularity_weight: float = 0.2):
         # Normalize weights to sum to 1
@@ -23,10 +26,12 @@ class BrandKeywordRanker:
         self.pop_w = popularity_weight / total
 
     def _get_embedding(self, text: str) -> np.ndarray:
-        resp = openai.Embedding.create(
+        # Use the new client API for embeddings
+        resp = client.embeddings.create(
             model="text-embedding-ada-002",
             input=text
         )
+        # The returned data list contains one item per input
         return np.array(resp['data'][0]['embedding'])
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
