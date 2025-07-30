@@ -1,7 +1,7 @@
 import os
-import pandas
-plotly as pd
+import pandas as pd
 import streamlit as st
+import plotly.express as px
 from openai import OpenAI
 
 # Load API keys from environment
@@ -16,7 +16,7 @@ if not OPENAI_API_KEY:
 # Initialize OpenAI client for GPT models
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Initialize Gemini client if credentials provided, else fallback to OpenAI client
+# Initialize Gemini client if credentials provided, else fallback
 if GEMINI_API_KEY and GEMINI_API_BASE:
     gemini_client = OpenAI(api_key=GEMINI_API_KEY, api_base=GEMINI_API_BASE)
 else:
@@ -37,7 +37,7 @@ class LLMRelevanceScorer:
             f"to the topic '{keyword}'? Reply with only the integer score."
         )
         try:
-            # Choose client based on model
+            # Choose appropriate client
             chat_client = gemini_client if model == "gemini-pro" else client
             response = chat_client.chat.completions.create(
                 model=model,
@@ -49,7 +49,7 @@ class LLMRelevanceScorer:
             )
             return float(response.choices[0].message.content.strip())
         except Exception:
-            # Fallback: if Gemini-Pro fails, retry with GPT-4
+            # Fallback for Gemini-Pro
             if model == "gemini-pro":
                 try:
                     fallback = client.chat.completions.create(
@@ -66,10 +66,8 @@ class LLMRelevanceScorer:
             return 0.0
 
     def score(self, brand: str, keyword: str) -> dict:
-        # Get Gemini-Pro and GPT-4 scores
         gemini_score = self._llm_score("gemini-pro", brand, keyword)
         gpt4_score = self._llm_score("gpt-4", brand, keyword)
-        # Compute combined weighted score
         combined_score = gemini_score * self.gemini_w + gpt4_score * self.gpt4_w
         return {
             "Brand": brand,
@@ -79,16 +77,14 @@ class LLMRelevanceScorer:
             "Combined (0-100)": round(combined_score, 1)
         }
 
-# Streamlit UI
-import plotly.express as px  # for nicer charts
-
+# Streamlit App
 st.title("Brand vs. Topic Relevance: GPT-4 + Gemini-Pro")
 
 brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
 keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, ice cream")
 
-gemini_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5, help="Relative weight for Gemini-Pro score")
-gpt4_w = st.slider("GPT-4 weight", 0.0, 1.0, 0.5, help="Relative weight for GPT-4 score")
+gemini_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5)
+gpt4_w = st.slider("GPT-4 weight", 0.0, 1.0, 0.5)
 
 if st.button("Compute Relevance Scores"):
     brands = [b.strip() for b in brands_input.split(',') if b.strip()]
@@ -102,57 +98,14 @@ if st.button("Compute Relevance Scores"):
             for keyword in keywords:
                 results.append(scorer.score(brand, keyword))
         df = pd.DataFrame(results)
-        # 1️⃣ Grouped Relevance Bar Chart by Keyword
-st.subheader("Combined Relevance Scores by Keyword and Brand")
-# Create grouped bar chart: x=Keyword, y=Combined, color=Brand
-fig1 = px.bar(
-    df,
-    x='Keyword',
-    y='Combined (0-100)',
-    color='Brand',
-    barmode='group',
-    title='Brand Scores per Keyword'
-)
-# Remove x-axis labels if desired, legend will show brands
-fig1.update_layout(xaxis_title='', yaxis_title='Combined Score (0-100)')
-st.plotly_chart(fig1, use_container_width=True)
-
-# 2️⃣ Individual Prompt Charts (Plotly)
-for keyword in keywords:
-    st.markdown("---")
-    st.subheader(f"Prompt and Scores for '{keyword}'")
-    # Show the exact prompt template
-    sample_prompt = (
-        f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
-    )
-    st.markdown(f"**Prompt Template:** `{sample_prompt}`")
-    # Filter and plot grouped bar for a single keyword (brands side by side)
-    subdf = df[df['Keyword'] == keyword]
-    if not subdf.empty:
-        fig2 = px.bar(
-            subdf,
-            x='Keyword',  # same keyword for grouping
+        # Grouped bar chart by keyword, colored by brand
+        fig = px.bar(
+            df,
+            x='Keyword',
             y='Combined (0-100)',
             color='Brand',
             barmode='group',
-            title=f"Combined Scores for '{keyword}'"
+            title='Combined Relevance Scores by Keyword and Brand'
         )
-        fig2.update_layout(xaxis_title='', yaxis_title='Combined Score (0-100)', showlegend=True)
-        st.plotly_chart(fig2, use_container_width=True)
-    else:
-        st.write("No scores available for this keyword.") (Plotly)
-        for keyword in keywords:
-            st.markdown("---")
-            st.subheader(f"Prompt and Scores for '{keyword}'")
-            # Show the exact prompt template
-            sample_prompt = (
-                f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
-            )
-            st.markdown(f"**Prompt Template:** `{sample_prompt}`")
-            # Filter and plot
-            subdf = df[df['Keyword'] == keyword]
-            if not subdf.empty:
-                fig2 = px.bar(subdf, x='Brand', y='Combined (0-100)', title=f"Scores for '{keyword}'")
-                st.plotly_chart(fig2, use_container_width=True)
-            else:
-                st.write("No scores available for this keyword.")
+        fig.update_layout(xaxis_title='', yaxis_title='Combined Score (0-100)')
+        st.plotly_chart(fig, use_container_width=True)
