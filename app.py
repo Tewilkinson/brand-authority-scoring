@@ -63,13 +63,22 @@ class BrandKeywordRanker:
 
     def _embed(self, text: str) -> np.ndarray:
         """
-        Embeds text with Ada-002 and returns numpy vector.
+        Embeds text with Ada-002, splitting into chunks if too long.
         """
-        resp = client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=text
-        )
-        return np.array(resp.data[0].embedding)
+        # Ada embedding max ~8191 tokens; we chunk by characters as proxy
+        max_chunk = 3000
+        chunks = [text[i:i+max_chunk] for i in range(0, len(text), max_chunk)]
+        embeds = []
+        for chunk in chunks:
+            resp = client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=chunk
+            )
+            embeds.append(np.array(resp.data[0].embedding))
+        # average chunk embeddings
+        return np.mean(np.vstack(embeds), axis=0)
+
+.data[0].embedding)
 
     def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
         denom = np.linalg.norm(a) * np.linalg.norm(b)
