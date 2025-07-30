@@ -5,8 +5,7 @@ import streamlit as st
 from openai import OpenAI
 from typing import Optional
 
-# Optional installations:
-# pip install wikipedia
+# Optional: pip install wikipedia
 try:
     import wikipedia
     WIKIPEDIA_AVAILABLE = True
@@ -24,10 +23,10 @@ client = OpenAI(api_key=API_KEY)
 
 class BrandKeywordRanker:
     """
-    Computes a unified relevance score by combining:
-      1) Embedding similarity from both Gemini and ChatGPT embeddings
-      2) Optional popularity signal
-      3) LLM-driven relevance from both Gemini-Pro and GPT-4o
+    Computes a combined relevance score by blending:
+      • Embedding similarity (via text-embedding-ada-002)
+      • Optional popularity signal
+      • LLM-driven relevance from GPT-4 and GPT-3.5-turbo
     """
     def __init__(
         self,
@@ -50,108 +49,93 @@ class BrandKeywordRanker:
         except Exception:
             return brand
 
-    def _embed(self, model: str, text: str) -> np.ndarray:
+    def _embed(self, text: str) -> np.ndarray:
         """
-        Try embedding with specified model; fallback to ADA if unavailable.
+        Compute embedding with Ada-002.
         """
-        for m in [model, "text-embedding-ada-002"]:
-            try:
-                resp = client.embeddings.create(model=m, input=text)
-                return np.array(resp.data[0].embedding)
-            except Exception as e:
-                st.warning(f"Embedding model '{m}' failed: {e}")
-        st.error("All embedding models failed.")
-        return np.zeros((1536,))  # default dimension
+        resp = client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=text
+        )
+        return np.array(resp.data[0].embedding)
 
     def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
         denom = np.linalg.norm(a) * np.linalg.norm(b)
         return float(np.dot(a, b) / denom) if denom else 0.0
 
     def _popularity(self, brand: str, keyword: str) -> float:
-        # placeholder for real SEO/Gemini analytics
+        # Placeholder for real SEO/Gemini analytics
         return 1.0
 
     def _llm_score(self, model: str, brand: str, keyword: str) -> float:
-        prompt = (
-            f"Rate relevance 0–100 for brand '{brand}' to topic '{keyword}'. "
-            "Answer with just the number."
-        )
+        """
+        Query LLM for numeric relevance 0–100. Fallback sequence on error.
+        """
         try:
             resp = client.chat.completions.create(
                 model=model,
                 temperature=0.2,
                 messages=[
-                    {"role":"system","content":"You are a helpful assistant."},
-                    {"role":"user","content":prompt}
+                    {"role": "system", "content": "You are a relevance scoring assistant."},
+                    {"role": "user", "content": f"Rate relevance (0-100) of brand '{brand}' to topic '{keyword}'. Reply with just the integer."}
                 ]
             )
             return float(resp.choices[0].message.content.strip())
-        except Exception as e:
-            st.warning(f"LLM model '{model}' failed: {e}")
+        except Exception:
             return 0.0
 
     def score(self, brand: str, keyword: str) -> dict:
-        wiki_text = self._get_wiki(brand)
-        # Embeddings: Gemini + ADA averaged
-        emb_brand_g = np.mean([
-            self._embed("gpt-4o-embedding-gecko", brand),
-            self._embed("gpt-4o-embedding-gecko", wiki_text)
-        ], axis=0)
-        emb_brand_a = np.mean([
-            self._embed("text-embedding-ada-002", brand),
-            self._embed("text-embedding-ada-002", wiki_text)
-        ], axis=0)
-        emb_kw_g = self._embed("gpt-4o-embedding-gecko", keyword)
-        emb_kw_a = self._embed("text-embedding-ada-002", keyword)
-        sim_g = self._cosine(emb_brand_g, emb_kw_g)
-        sim_a = self._cosine(emb_brand_a, emb_kw_a)
-        sim_score = (sim_g + sim_a) / 2 * 100
-
+        # Build brand context
+        profile = self._get_wiki(brand)
+        # Embedding similarity
+        emb_brand = np.mean([self._embed(brand), self._embed(profile)], axis=0)
+        emb_kw = self._embed(keyword)
+        sim_score = self._cosine(emb_brand, emb_kw) * 100
+        # Popularity
         pop_score = self._popularity(brand, keyword) * 100 if self.use_popularity else 0
-
-        llm_g = self._llm_score("gemini-pro", brand, keyword)
-        llm_c = self._llm_score("gpt-4o", brand, keyword)
-        llm_score = (llm_g + llm_c) / 2
-
+        # LLM relevance
+        g4 = self._llm_score("gpt-4", brand, keyword)
+        g35 = self._llm_score("gpt-3.5-turbo", brand, keyword)
+        llm_score = (g4 + g35) / 2
+        # Combine
         combined = sim_score * self.embed_w + pop_score * self.pop_w + llm_score * self.llm_w
-        final = max(0, min(combined, 100))
-
+        combined = max(0, min(combined, 100))
         return {
-            'embed_similarity': sim_score,
+            'similarity': sim_score,
             'popularity': pop_score,
-            'llm_gemini': llm_g,
-            'llm_gpt4o': llm_c,
-            'combined': final
+            'gpt4': g4,
+            'gpt3.5': g35,
+            'combined': combined
         }
 
 # Streamlit UI
-st.title("Unified Brand–Topic Authority Scorer")
+st.title("Brand vs. Topic Authority Scorer")
 
-brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma", key="brands")
-keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, air max plus, ice creams, call of duty", key="keywords")
-use_pop = st.checkbox("Include popularity signal", False)
+brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
+keywords_input = st.text_input("Keywords (comma-separated)", "new trainers, air max plus")
+use_pop = st.checkbox("Include popularity", False)
 embed_w = st.slider("Embedding weight", 0.0, 1.0, 0.4)
 pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.1)
 llm_w = st.slider("LLM weight", 0.0, 1.0, 0.5)
 
-if st.button("Score"):
+if st.button("Compute Scores"):
     brands = [b.strip() for b in brands_input.split(',') if b.strip()]
     kws = [k.strip() for k in keywords_input.split(',') if k.strip()]
     if not brands or not kws:
-        st.warning("Please enter at least one brand and one keyword.")
+        st.warning("Enter at least one brand and one keyword.")
     else:
-        rk = BrandKeywordRanker(embed_w, pop_w, llm_w, use_pop)
+        rk = BrandKeywordRanker(embed_weight=embed_w, pop_weight=pop_w, llm_weight=llm_w, use_popularity=use_pop)
         rows = []
         for b in brands:
             for k in kws:
-                r = rk.score(b, k)
+                res = rk.score(b, k)
                 rows.append({
                     'Brand': b,
                     'Keyword': k,
-                    'Sim(0-100)': f"{r['embed_similarity']:.1f}",
-                    'Pop(0-100)': f"{r['popularity']:.1f}",
-                    'GeminiLLM': f"{r['llm_gemini']:.1f}",
-                    'GPT4oLLM': f"{r['llm_gpt4o']:.1f}",
-                    'Final': f"{r['combined']:.1f}" })
-        df = pd.DataFrame(rows)
-        st.dataframe(df)
+                    'Similarity': f"{res['similarity']:.1f}",
+                    'Popularity': f"{res['popularity']:.1f}",
+                    'GPT-4': f"{res['gpt4']:.1f}",
+                    'GPT-3.5': f"{res['gpt3.5']:.1f}",
+                    'Combined': f"{res['combined']:.1f}"  
+                })
+        st.dataframe(pd.DataFrame(rows))
