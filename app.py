@@ -58,38 +58,7 @@ class BrandKeywordRanker:
         try:
             page = wikipedia.page(brand, auto_suggest=False)
             return page.content
-        except Exception:
-            return brand
-
-    def _embed(self, text: str) -> np.ndarray:
-        """
-        Embeds text with Ada-002, splitting into chunks if too long.
-        """
-        # Ada embedding max ~8191 tokens; we chunk by characters as proxy
-        max_chunk = 3000
-        chunks = [text[i:i+max_chunk] for i in range(0, len(text), max_chunk)]
-        embeds = []
-        for chunk in chunks:
-            resp = client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=chunk
-            )
-            embeds.append(np.array(resp.data[0].embedding))
-        # average chunk embeddings
-        return np.mean(np.vstack(embeds), axis=0)
-
-.data[0].embedding)
-
-    def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
-        denom = np.linalg.norm(a) * np.linalg.norm(b)
-        return float(np.dot(a, b) / denom) if denom else 0.0
-
-    def _popularity(self, brand: str, keyword: str) -> float:
-        """
-        Uses Google Trends (PyTrends) to fetch normalized interest (0-1) for 'brand keyword'.
-        Requires PyTrends to be installed.
-        """
-        if not TRENDS_AVAILABLE or not self.use_popularity:
+                except Exception:
             return 0.0
         try:
             pytrends = TrendReq(hl='en-US', tz=0)
