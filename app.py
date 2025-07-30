@@ -48,12 +48,14 @@ class BrandKeywordRanker:
         self.use_popularity = use_popularity
 
     def _get_full_wiki(self, brand: str) -> str:
-        """Fetches full Wikipedia page content or brand name if unavailable"""
+        """Fetches a concise Wikipedia summary for cleaner embeddings or brand name if unavailable"""
         if not WIKIPEDIA_AVAILABLE:
             return brand
         try:
-            page = wikipedia.page(brand, auto_suggest=False)
-            return page.content
+            # Use summary (first 2 sentences) to focus embedding on core definition
+            return wikipedia.summary(brand, sentences=2, auto_suggest=False)
+        except Exception:
+            return brand
         except Exception:
             return brand
 
