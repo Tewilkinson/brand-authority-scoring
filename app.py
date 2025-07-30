@@ -79,6 +79,8 @@ class LLMRelevanceScorer:
         }
 
 # Streamlit UI
+import plotly.express as px  # for nicer charts
+
 st.title("Brand vs. Topic Relevance: GPT-4 + Gemini-Pro")
 
 brands_input = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
@@ -99,23 +101,25 @@ if st.button("Compute Relevance Scores"):
             for keyword in keywords:
                 results.append(scorer.score(brand, keyword))
         df = pd.DataFrame(results)
-        # 1️⃣ Overall Relevance Bar Chart
-st.subheader("Overall Relevance Scores per Brand–Keyword Pair")
-df['Brand + Keyword'] = df['Brand'] + ' — ' + df['Keyword']
-st.bar_chart(df.set_index('Brand + Keyword')['Combined (0-100)'])
+        # 1️⃣ Overall Relevance Bar Chart (Plotly)
+        st.subheader("Overall Relevance Scores per Brand–Keyword Pair")
+        df['Pair'] = df['Brand'] + ' — ' + df['Keyword']
+        fig1 = px.bar(df, x='Pair', y='Combined (0-100)', title='Combined Relevance')
+        st.plotly_chart(fig1, use_container_width=True)
 
-# 2️⃣ Individual Prompt Charts
-for keyword in keywords:
-    st.markdown(f"---")
-    st.subheader(f"Prompt and Scores for '{keyword}'")
-    # Show the exact prompt template
-    sample_prompt = (
-        f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
-    )
-    st.markdown(f"**Prompt Template:** `{sample_prompt}`")
-    # Bar chart of combined scores for this specific keyword
-    subdf = df[df['Keyword'] == keyword]
-    if not subdf.empty:
-        st.bar_chart(subdf.set_index('Brand')['Combined (0-100)'])
-    else:
-        st.write("No scores available for this keyword.")
+        # 2️⃣ Individual Prompt Charts (Plotly)
+        for keyword in keywords:
+            st.markdown("---")
+            st.subheader(f"Prompt and Scores for '{keyword}'")
+            # Show the exact prompt template
+            sample_prompt = (
+                f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
+            )
+            st.markdown(f"**Prompt Template:** `{sample_prompt}`")
+            # Filter and plot
+            subdf = df[df['Keyword'] == keyword]
+            if not subdf.empty:
+                fig2 = px.bar(subdf, x='Brand', y='Combined (0-100)', title=f"Scores for '{keyword}'")
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.write("No scores available for this keyword.")
