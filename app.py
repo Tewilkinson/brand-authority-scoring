@@ -17,7 +17,7 @@ class BrandKeywordRanker:
     """
     Computes a topical authority / ease-of-rank score (0-100)
     for given brand(s) and keyword(s) using semantic similarity,
-    popularity signals, brand-model heuristics, and category matching.
+    popularity signals, brand-model heuristics, and optional category gating.
     """
     def __init__(self, similarity_weight: float = 0.8, popularity_weight: float = 0.2):
         # Normalize weights to sum to 1
@@ -31,6 +31,7 @@ class BrandKeywordRanker:
             'adidas': ['ultraboost', 'stan smith', 'nmd', 'adilette'],
             'puma': ['suede', 'rs', 'basket'],
             'solero': ['ice cream', 'gelato', 'sorbet'],
+            'playstation': ['playstation', 'ps5', 'ps4', 'ps'],  # brand tokens for embedding
         }
         # Map brands to their primary category
         self.brand_categories = {
@@ -38,11 +39,13 @@ class BrandKeywordRanker:
             'adidas': 'trainers',
             'puma': 'trainers',
             'solero': 'ice creams',
+            'playstation': 'gaming',
         }
         # Simple keyword category detection by keyword tokens
         self.keyword_categories = {
             'trainers': ['trainer', 'trainers', 'air max', 'sneaker', 'sneakers', 'dunk'],
-            'ice creams': ['ice cream', 'gelato', 'sorbet']
+            'ice creams': ['ice cream', 'gelato', 'sorbet'],
+            'gaming': ['playstation', 'xbox', 'gaming', 'call of duty', 'fortnite', 'lol']
         }
 
     def _get_embedding(self, text: str) -> np.ndarray:
@@ -75,17 +78,16 @@ class BrandKeywordRanker:
         # Detect categories
         brand_cat = self.brand_categories.get(bk)
         kw_cat = self._detect_keyword_category(keyword)
-        # If either category is unknown or they don't match, return zeros
-        if not brand_cat or not kw_cat or brand_cat != kw_cat:
+        # If both categories known and mismatch, return zeros
+        if brand_cat and kw_cat and (brand_cat != kw_cat):
             return {'similarity': 0.0, 'popularity': 0.0, 'score': 0.0}
-
-        # Compute embeddings and base semantic similarity
+        # Compute embeddings and semantic similarity
         emb_brand = self._get_embedding(brand)
         emb_kw = self._get_embedding(keyword)
         sim = self._cosine_similarity(emb_brand, emb_kw)
 
-        # Heuristic: penalize if keyword references a model not in the brand's lineup
-        models = self.product_lines.get(bk, [])
+        # Heuristic: penalize if specific model keyword not in brand's product lines
+        models = self.product_lines.get(bk)
         if models and not any(m in keyword.lower() for m in models):
             sim *= 0.5
 
@@ -101,8 +103,8 @@ class BrandKeywordRanker:
 st.title("Brand vs. Keyword Topical Authority Scorer")
 
 st.markdown("**Enter multiple brands and keywords (comma-separated):**")
-brands_input = st.text_area("Brands", value="Nike, Adidas, Puma, Solero")
-keywords_input = st.text_area("Keywords/Topics", value="new trainers, air max plus, ice creams")
+brands_input = st.text_area("Brands", value="Nike, Adidas, Puma, Solero, PlayStation")
+keywords_input = st.text_area("Keywords/Topics", value="new trainers, air max plus, ice creams, call of duty")
 
 # Weights configuration
 sim_w = st.slider("Similarity weight", 0.0, 1.0, 0.8)
@@ -130,4 +132,8 @@ if st.button("Compute Scores"):
         st.dataframe(df)
 
 st.markdown("---")
-st.markdown("Now outputs 0 for brand-keyword pairs from mismatched categories (e.g. trainers vs. ice creams).")
+st.markdown(
+    "- Returns 0 when categories are explicitly conflicting (e.g. trainers vs. ice creams).\n"
+    "- Falls back to pure embedding similarity when categories are unknown or match.\n"
+    "- Applies model-level penalties only when brand product line is defined."
+)
