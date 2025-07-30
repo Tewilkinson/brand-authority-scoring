@@ -3,32 +3,51 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
-import wikipedia  # pip install wikipedia
+from typing import Optional
 
-# Configuration: Set your OpenAI API key in the environment
-oai_key = os.getenv('OPENAI_API_KEY')
-if not oai_key:
+# Optional installations:
+# pip install wikipedia
+# For more robust search, consider using Google Knowledge Graph or SEO APIs
+try:
+    import wikipedia
+    WIKIPEDIA_AVAILABLE = True
+except ImportError:
+    WIKIPEDIA_AVAILABLE = False
+
+# Configuration
+API_KEY = os.getenv('OPENAI_API_KEY')
+if not API_KEY:
     st.error("Please set the OPENAI_API_KEY environment variable.")
     st.stop()
 
-# Initialize the OpenAI client
-client = OpenAI(api_key=oai_key)
+# Initialize OpenAI client
+client = OpenAI(api_key=API_KEY)
 
 class BrandKeywordRanker:
     """
-    Dynamically gathers brand context from Wikipedia (and optionally a Knowledge Graph),
-    embeds both brand profile and keywords, and computes a robust topical authority score.
+    Robust relevance scorer combining:
+      1) Embedding similarity (brand name + live Wikipedia summary)
+      2) Configurable popularity signal (stub)
+      3) Optional LLM-based citation-driven relevance scoring
     """
-    def __init__(self, similarity_weight: float = 0.8, popularity_weight: float = 0.2):
-        total = similarity_weight + popularity_weight
+    def __init__(self,
+                 similarity_weight: float = 0.5,
+                 popularity_weight: float = 0.1,
+                 llm_weight: float = 0.4,
+                 use_llm: bool = True,
+                 llm_model: str = "gpt-4o",
+                 llm_temperature: float = 0.3):
+        total = similarity_weight + popularity_weight + (llm_weight if use_llm else 0)
         self.sim_w = similarity_weight / total
         self.pop_w = popularity_weight / total
+        self.llm_w = (llm_weight / total) if use_llm else 0
+        self.use_llm = use_llm
+        self.llm_model = llm_model
+        self.llm_temperature = llm_temperature
 
-    def _get_brand_profile(self, brand: str) -> str:
-        """
-        Fetch a brief summary of the brand from Wikipedia.
-        Fallbacks to brand name if lookup fails.
-        """
+    def _fetch_wikipedia_summary(self, brand: str) -> str:
+        if not WIKIPEDIA_AVAILABLE:
+            return brand
         try:
             return wikipedia.summary(brand, sentences=2)
         except Exception:
@@ -41,76 +60,112 @@ class BrandKeywordRanker:
         )
         return np.array(resp.data[0].embedding)
 
-    def _combine_embeddings(self, embeddings: list) -> np.ndarray:
-        """
-        Averages a list of embeddings into a single vector.
-        """
-        return np.mean(np.vstack(embeddings), axis=0)
-
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+    def _cosine(self, a: np.ndarray, b: np.ndarray) -> float:
         return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
-    def _fetch_popularity_score(self, keyword: str, brand: str) -> float:
-        """
-        Placeholder for search-volume or Trends-based popularity.
-        TODO: integrate with real SEO API or Gemini predictions.
-        """
+    def _popularity_score(self, brand: str, keyword: str) -> float:
+        # Placeholder: integrate real SEO API here
         return 1.0
 
-    def score(self, brand: str, keyword: str) -> dict:
-        # Build brand profile
-        profile = self._get_brand_profile(brand)
-        # Embed brand name + profile summary
-        emb_brand_name = self._get_embedding(brand)
-        emb_brand_profile = self._get_embedding(profile)
-        emb_brand = self._combine_embeddings([emb_brand_name, emb_brand_profile])
+    def _llm_relevance(self, brand: str, keyword: str) -> Optional[float]:
+        """
+        Uses an LLM to score relevance 0-100 with citations.
+        Expects model to output JSON: {"score": int, "evidence": "..."}
+        """
+        try:
+            prompt = (
+                f"You are an expert analyzing brand relevance. "
+                f"On a scale of 0-100, how relevant is the brand '{brand}' "
+                f"to the topic '{keyword}'? "
+                "Provide a JSON response with keys 'score' (integer) and 'evidence' (a short citation list)."
+            )
+            response = client.chat.completions.create(
+                model=self.llm_model,
+                temperature=self.llm_temperature,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            text = response.choices[0].message.content.strip()
+            # Parse naive JSON
+            import json
+            data = json.loads(text)
+            return float(data.get('score', 0))
+        except Exception:
+            return None
 
-        # Embed keyword
+    def score(self, brand: str, keyword: str) -> dict:
+        # 1) Embedding-based semantic relevance
+        summary = self._fetch_wikipedia_summary(brand)
+        emb_brand = np.mean([
+            self._get_embedding(brand),
+            self._get_embedding(summary)
+        ], axis=0)
         emb_kw = self._get_embedding(keyword)
-        # Compute semantic similarity
-        sim = self._cosine_similarity(emb_brand, emb_kw)
-        # Popularity signal
-        pop = self._fetch_popularity_score(keyword, brand)
-        # Weighted combination
-        combined = sim * self.sim_w + pop * self.pop_w
-        final = min(combined, 1.0) * 100
-        return {'similarity': sim, 'popularity': pop, 'score': final}
+        sim_score = self._cosine(emb_brand, emb_kw) * 100
+
+        # 2) Popularity proxy
+        pop_score = self._popularity_score(brand, keyword) * 100
+
+        # 3) LLM-driven relevance (0-100)
+        llm_score = None
+        if self.use_llm:
+            llm_score = self._llm_relevance(brand, keyword)
+
+        # Combine
+        total = sim_score * self.sim_w + pop_score * self.pop_w
+        if llm_score is not None:
+            total += llm_score * self.llm_w
+        # Normalize to 0-100
+        total = max(0, min(total, 100))
+
+        return {
+            'semantic': sim_score,
+            'popularity': pop_score,
+            'llm': llm_score,
+            'combined_score': total
+        }
 
 # ----- Streamlit UI ----- #
-st.title("Dynamic Brand vs. Keyword Authority Scorer")
+st.title("Comprehensive Brand vs. Keyword Relevance Tool")
 
-st.markdown("Enter brands & keywords (comma-separated). Scores use live Wikipedia context and OpenAI embeddings.")
-brands_input = st.text_area("Brands", value="Nike, Adidas, Puma, Solero, PlayStation, Activision")
-keywords_input = st.text_area("Keywords/Topics", value="new trainers, air max plus, ice creams, call of duty")
+st.markdown(
+    "Enter comma-separated brands & keywords. "
+    "Enable LLM scoring for citation-driven relevance (may cost extra)."
+)
+brands = [b.strip() for b in st.text_input("Brands", "Nike, Adidas, Puma").split(',') if b.strip()]
+keywords = [k.strip() for k in st.text_input("Keywords/Topics", "new trainers, air max plus").split(',') if k.strip()]
 
-sim_w = st.slider("Similarity weight", 0.0, 1.0, 0.8)
-pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.2)
+sim_w = st.slider("Embedding similarity weight", 0.0, 1.0, 0.5)
+pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.1)
+llm_w = st.slider("LLM relevance weight", 0.0, 1.0, 0.4)
+use_llm = st.checkbox("Use LLM-based relevance scoring", True)
 
-if st.button("Compute Scores"):
-    brands = [b.strip() for b in brands_input.split(',') if b.strip()]
-    keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
-    ranker = BrandKeywordRanker(similarity_weight=sim_w, popularity_weight=pop_w)
-
-    results = []
+if st.button("Run Analysis") and brands and keywords:
+    ranker = BrandKeywordRanker(similarity_weight=sim_w,
+                                 popularity_weight=pop_w,
+                                 llm_weight=llm_w,
+                                 use_llm=use_llm)
+    rows = []
     for brand in brands:
-        for keyword in keywords:
-            res = ranker.score(brand, keyword)
-            results.append({
+        for kw in keywords:
+            res = ranker.score(brand, kw)
+            rows.append({
                 'Brand': brand,
-                'Keyword': keyword,
-                'Semantic Similarity': f"{res['similarity']:.3f}",
-                'Popularity Signal': f"{res['popularity']:.3f}",
-                'Topical Authority Score': f"{res['score']:.1f}"
+                'Keyword': kw,
+                'Semantic (0-100)': f"{res['semantic']:.1f}",
+                'Popularity (0-100)': f"{res['popularity']:.1f}",
+                'LLM (0-100)': f"{res['llm']:.1f}" if res['llm'] is not None else 'N/A',
+                'Final Score': f"{res['combined_score']:.1f}"
             })
-    df = pd.DataFrame(results)
+    df = pd.DataFrame(rows)
     st.dataframe(df)
 
 st.markdown("---")
 st.markdown(
-    "**How it works:**\n"
-    "- Pulls the first two sentences of each brand's Wikipedia page as a profile.\n"
-    "- Embeds both brand name & profile, averaging them into a unified vector.\n"
-    "- Embeds the keyword and measures cosine similarity.\n"
-    "- (Optional) Layer in real search-volume signals via SEO/Gemini APIs.\n"
-    "- Outputs a normalized 0–100 topical authority score."
+    "**Notes:** \n"
+    "- Embedding uses brand name + Wikipedia summary.\n"
+    "- Popularity is a stub; integrate your SEO/Gemini data pipeline.\n"
+    "- LLM step can cite real-world evidence (enable for robust scoring)."
 )
