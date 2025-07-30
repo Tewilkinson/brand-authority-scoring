@@ -1,5 +1,6 @@
 import os
-import pandas as pd
+import pandas
+plotly as pd
 import streamlit as st
 from openai import OpenAI
 
@@ -101,13 +102,45 @@ if st.button("Compute Relevance Scores"):
             for keyword in keywords:
                 results.append(scorer.score(brand, keyword))
         df = pd.DataFrame(results)
-        # 1️⃣ Overall Relevance Bar Chart (Plotly)
-        st.subheader("Overall Relevance Scores per Brand–Keyword Pair")
-        df['Pair'] = df['Brand'] + ' — ' + df['Keyword']
-        fig1 = px.bar(df, x='Pair', y='Combined (0-100)', title='Combined Relevance')
-        st.plotly_chart(fig1, use_container_width=True)
+        # 1️⃣ Grouped Relevance Bar Chart by Keyword
+st.subheader("Combined Relevance Scores by Keyword and Brand")
+# Create grouped bar chart: x=Keyword, y=Combined, color=Brand
+fig1 = px.bar(
+    df,
+    x='Keyword',
+    y='Combined (0-100)',
+    color='Brand',
+    barmode='group',
+    title='Brand Scores per Keyword'
+)
+# Remove x-axis labels if desired, legend will show brands
+fig1.update_layout(xaxis_title='', yaxis_title='Combined Score (0-100)')
+st.plotly_chart(fig1, use_container_width=True)
 
-        # 2️⃣ Individual Prompt Charts (Plotly)
+# 2️⃣ Individual Prompt Charts (Plotly)
+for keyword in keywords:
+    st.markdown("---")
+    st.subheader(f"Prompt and Scores for '{keyword}'")
+    # Show the exact prompt template
+    sample_prompt = (
+        f"On a scale of 0 to 100, how relevant is the brand '{{brand}}' to the topic '{keyword}'?"
+    )
+    st.markdown(f"**Prompt Template:** `{sample_prompt}`")
+    # Filter and plot grouped bar for a single keyword (brands side by side)
+    subdf = df[df['Keyword'] == keyword]
+    if not subdf.empty:
+        fig2 = px.bar(
+            subdf,
+            x='Keyword',  # same keyword for grouping
+            y='Combined (0-100)',
+            color='Brand',
+            barmode='group',
+            title=f"Combined Scores for '{keyword}'"
+        )
+        fig2.update_layout(xaxis_title='', yaxis_title='Combined Score (0-100)', showlegend=True)
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.write("No scores available for this keyword.") (Plotly)
         for keyword in keywords:
             st.markdown("---")
             st.subheader(f"Prompt and Scores for '{keyword}'")
