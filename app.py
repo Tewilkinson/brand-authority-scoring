@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import openai
+import pandas as pd
 import streamlit as st
 
 # Configuration: Set your OpenAI API key in the environment
@@ -16,8 +17,10 @@ class BrandKeywordRanker:
     for a given brand and keyword/topic using semantic similarity and popularity signals.
     """
     def __init__(self, similarity_weight: float = 0.8, popularity_weight: float = 0.2):
-        self.sim_w = similarity_weight
-        self.pop_w = popularity_weight
+        # Normalize weights to sum to 1
+        total = similarity_weight + popularity_weight
+        self.sim_w = similarity_weight / total
+        self.pop_w = popularity_weight / total
 
     def _get_embedding(self, text: str) -> np.ndarray:
         resp = openai.Embedding.create(
@@ -30,7 +33,7 @@ class BrandKeywordRanker:
         return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
     def _fetch_popularity_score(self, keyword: str, brand: str) -> float:
-        # TODO: integrate with a real SEO/popularity API
+        # TODO: integrate with a real SEO/popularity API (e.g., Google Trends, Ahrefs)
         return 1.0
 
     def score(self, brand: str, keyword: str) -> dict:
@@ -45,20 +48,34 @@ class BrandKeywordRanker:
 # ----- Streamlit UI ----- #
 st.title("Brand vs. Keyword Topical Authority Scorer")
 
-brand = st.text_input("Brand name", value="Nike")
-keyword = st.text_input("Keyword or topic", value="air max plus")
+st.markdown("**Enter multiple brands and keywords (comma-separated):**")
+brands_input = st.text_area("Brands", value="Nike, Adidas, Puma")
+keywords_input = st.text_area("Keywords/Topics", value="new trainers, air max plus")
+
+# Weights configuration
 sim_w = st.slider("Similarity weight", 0.0, 1.0, 0.8)
 pop_w = st.slider("Popularity weight", 0.0, 1.0, 0.2)
 
-if st.button("Compute Score"):
-    if not brand.strip() or not keyword.strip():
-        st.warning("Please enter both a brand and a keyword.")
+if st.button("Compute Scores"):
+    brands = [b.strip() for b in brands_input.split(',') if b.strip()]
+    keywords = [k.strip() for k in keywords_input.split(',') if k.strip()]
+    if not brands or not keywords:
+        st.warning("Please enter at least one brand and one keyword.")
     else:
         ranker = BrandKeywordRanker(similarity_weight=sim_w, popularity_weight=pop_w)
-        result = ranker.score(brand, keyword)
-        st.metric("Semantic Similarity", f"{result['similarity']:.3f}")
-        st.metric("Popularity Signal", f"{result['popularity']:.3f}")
-        st.metric("Topical Authority Score", f"{result['score']:.1f}")
+        rows = []
+        for brand in brands:
+            for keyword in keywords:
+                result = ranker.score(brand, keyword)
+                rows.append({
+                    'Brand': brand,
+                    'Keyword': keyword,
+                    'Semantic Similarity': f"{result['similarity']:.3f}",
+                    'Popularity Signal': f"{result['popularity']:.3f}",
+                    'Topical Authority Score': f"{result['score']:.1f}"
+                })
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
 
 st.markdown("---")
-st.markdown("Configure weights to balance pure semantic fit against external popularity metrics.")
+st.markdown("Adjust weights so that similarity and popularity balance as you prefer. Weights will be normalized internally.")
