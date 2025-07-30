@@ -2,3 +2,4 @@ numpy
 openai
 streamlit
 wikipedia
+pytrends
