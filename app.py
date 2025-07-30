@@ -26,13 +26,13 @@ class BrandKeywordRanker:
         self.pop_w = popularity_weight / total
 
     def _get_embedding(self, text: str) -> np.ndarray:
-        # Use the new client API for embeddings
+        # Use the new client API for embeddings and handle attribute access
         resp = client.embeddings.create(
             model="text-embedding-ada-002",
             input=text
         )
-        # The returned data list contains one item per input
-        return np.array(resp['data'][0]['embedding'])
+        # Access the first embedding vector
+        return np.array(resp.data[0].embedding)
 
     def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
         return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
