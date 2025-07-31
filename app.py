@@ -6,38 +6,56 @@ from openai import OpenAI
 from pytrends.request import TrendReq
 import time # For rate limiting and exponential backoff
 
-# Load API keys
+# --- Configuration for API Keys ---
+# Set these as environment variables for security and ease of deployment
+# Example:
+# export OPENAI_API_KEY="sk-..."
+# export GEMINI_API_KEY="AIza..."
+# export GEMINI_API_BASE="https://generativelanguage.googleapis.com/v1beta" # For Google AI Studio
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# IMPORTANT: Set this environment variable for Gemini API calls
-# For Google AI Studio, use 'https://generativelanguage.googleapis.com/v1beta'
-# If you're using Vertex AI, the URL will be different, e.g.,
-# 'https://<region>-aiplatform.googleapis.com/v1beta/projects/<project-id>/locations/<region>/publishers/google/models/'
-GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta")
-
+GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta") # Default for AI Studio
 
 if not OPENAI_API_KEY:
     st.error("Please set the OPENAI_API_KEY environment variable.")
     st.stop()
 
-# Initialize OpenAI client for GPT-4
+# Initialize OpenAI client for GPT models
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize Gemini client using the base_url
-# The 'openai' library can be used to interact with Google's Gemini API
-# by setting the appropriate base_url.
+gemini_client = None
 if GEMINI_API_KEY:
     try:
+        # Use base_url for non-OpenAI endpoints when using the OpenAI library
         gemini_client = OpenAI(api_key=GEMINI_API_KEY, base_url=GEMINI_API_BASE)
-        # Test Gemini client availability
-        test_gemini_model = "gemini-1.5-flash" # Or "gemini-1.5-pro" if you have access
+        
+        # --- IMPORTANT: VERIFY THIS GEMINI MODEL NAME ---
+        # Go to Google AI Studio or Vertex AI and check the exact deployed model name.
+        # Common options: "gemini-1.5-flash", "gemini-1.5-flash-001", "gemini-1.5-flash-002", "gemini-1.5-pro", "gemini-1.5-pro-001"
+        TEST_GEMINI_MODEL = "gemini-1.5-flash" # <--- **ADJUST THIS BASED ON YOUR ACCESS**
+        
+        # Attempt to list models to confirm connection and access
+        # This is a good health check
         try:
-            gemini_client.models.retrieve(test_gemini_model)
-            st.success(f"Successfully connected to Gemini model: {test_gemini_model}")
+            available_models = gemini_client.models.list()
+            found_gemini_model = False
+            for model_obj in available_models:
+                if model_obj.id == TEST_GEMINI_MODEL:
+                    found_gemini_model = True
+                    break
+            
+            if found_gemini_model:
+                st.success(f"Successfully initialized and verified access to Gemini model: {TEST_GEMINI_MODEL}")
+            else:
+                st.warning(f"Connected to Gemini API but model '{TEST_GEMINI_MODEL}' not found or accessible. Please check model name and permissions.")
+                st.warning("Falling back to GPT-4 for Gemini scores.")
+                gemini_client = client # Fallback to OpenAI client
         except Exception as e:
-            st.warning(f"Could not retrieve Gemini model {test_gemini_model} using provided API key/base URL: {e}. Falling back to GPT-4 for Gemini scores if possible.")
-            gemini_client = client # Fallback to OpenAI client if Gemini fails
+            st.warning(f"Could not verify Gemini model access (error: {e}). Falling back to GPT-4 for Gemini scores. Check GEMINI_API_BASE and API Key.")
+            gemini_client = client # Fallback if model listing fails
+            
     except Exception as e:
         st.error(f"Error initializing Gemini client: {e}. Ensure GEMINI_API_KEY and GEMINI_API_BASE are correct.")
         gemini_client = client # Fallback if initialization itself fails
@@ -57,33 +75,34 @@ class RelevanceScorer:
         self.pop_w     = pop_w     / total if total else 0
         
         # Initialize pytrends once per scorer instance
-        # tz=360 for UTC-6, you might want to adjust this based on your audience's timezone
-        self.pytrends = TrendReq(hl='en-US', tz=360, retries=3, backoff_factor=0.5) 
-        # retries and backoff_factor help with transient pytrends issues,
-        # but the custom exponential backoff in _popularity is more robust for 429s.
+        # tz=360 for UTC-6. Adjust hl (host language) and tz (timezone) as needed.
+        # Removing retries and backoff_factor from here as we're doing custom handling
+        self.pytrends = TrendReq(hl='en-US', tz=360) 
 
 
-    def _llm_score(self, model: str, brand: str, keyword: str) -> float:
+    def _llm_score(self, model_alias: str, brand: str, keyword: str) -> float:
         prompt = (
             f"On a scale of 0 to 100, how relevant is the brand '{brand}' "
             f"to the topic '{keyword}'? Reply with only the integer score."
         )
         
-        # Determine which client to use based on the model string
         client_to_use = None
-        if "gemini" in model.lower():
+        actual_model_name = None
+
+        if "gemini" in model_alias.lower():
             client_to_use = gemini_client
-            actual_model_name = "gemini-1.5-flash" # Use a specific Gemini model
-        elif "gpt-4" in model.lower():
+            # --- IMPORTANT: ENSURE THIS IS THE CORRECT, ACCESSIBLE GEMINI MODEL ---
+            actual_model_name = "gemini-1.5-flash" # <--- **ADJUST THIS IF NEEDED**
+        elif "gpt-4" in model_alias.lower():
             client_to_use = client # This is your OpenAI client for GPT-4
-            actual_model_name = "gpt-4" # Or "gpt-4-turbo", "gpt-4o"
+            actual_model_name = "gpt-4o" # Or "gpt-4-turbo", "gpt-4" - **ADJUST AS PER YOUR OPENAI ACCESS**
         else:
-            st.error(f"Unsupported LLM model: {model}")
+            st.error(f"Unsupported LLM model alias: {model_alias}")
             return 0.0
 
-        if client_to_use is None: # Should not happen with the checks above, but as a safeguard
-             return 0.0
-            
+        if client_to_use is None:
+            return 0.0 # This should be caught by the initialization health check
+
         try:
             resp = client_to_use.chat.completions.create(
                 model=actual_model_name,
@@ -94,10 +113,9 @@ class RelevanceScorer:
                 ]
             )
             score = float(resp.choices[0].message.content.strip())
-            # Ensure score is within 0-100 range
-            return max(0.0, min(100.0, score))
+            return max(0.0, min(100.0, score)) # Ensure score is within 0-100
         except Exception as e:
-            st.warning(f"Error with {model} ({actual_model_name}) for '{brand}' and '{keyword}': {e}")
+            st.warning(f"Error with {model_alias} ({actual_model_name}) for '{brand}' and '{keyword}': {e}")
             return 0.0 # Return 0 if LLM call fails
 
 
@@ -125,18 +143,22 @@ class RelevanceScorer:
                     # If no data, it means low or no search interest for the term
                     return 0.0
                 
-                # The last value in the 'interest over time' series usually represents the most recent interest.
                 # Google Trends already returns values on a 0-100 scale.
                 score = float(df_trend[term].iloc[-1])
                 return score
             except Exception as e:
+                error_message = str(e)
                 # Check for rate limit error (HTTP 429 or similar indicators)
-                if "429" in str(e) or "Too Many Requests" in str(e) or "ResponseError: The request failed: Google returned a response with code 429" in str(e):
+                if "429" in error_message or "Too Many Requests" in error_message or "ResponseError: The request failed: Google returned a response with code 429" in error_message:
                     delay = base_delay * (2 ** attempt) # Exponential backoff
                     st.warning(f"[Google Trends] Rate limit hit for '{term}'. Retrying in {delay:.1f} seconds (Attempt {attempt + 1}/{max_retries})...")
                     time.sleep(delay)
+                elif "method_whitelist" in error_message:
+                    st.error(f"[Google Trends] Compatibility error with urllib3 for '{term}'. "
+                             f"Please run `pip install \"urllib3<2\"` in your terminal and restart the app. Error: {error_message}")
+                    return 0.0 # Stop trying for this specific error
                 else:
-                    st.error(f"[Google Trends] Error fetching '{term}': {e}")
+                    st.error(f"[Google Trends] Unhandled error fetching '{term}': {error_message}")
                     return 0.0 # Return 0 for other errors
         
         st.error(f"[Google Trends] Failed to fetch '{term}' after {max_retries} attempts due to persistent rate limiting.")
@@ -144,19 +166,19 @@ class RelevanceScorer:
 
 
     def score(self, brand: str, keyword: str) -> dict:
-        # Use a specific Gemini model name for the call
-        g_score = self._llm_score('gemini-1.5-flash', brand, keyword) 
-        # Use a specific GPT-4 model name for the call
-        c_score = self._llm_score('gpt-4o', brand, keyword) # Example: using gpt-4o, adjust as needed
+        # Use a specific Gemini model name alias for the call
+        g_score = self._llm_score('gemini-llm', brand, keyword) 
+        # Use a specific GPT-4 model name alias for the call
+        c_score = self._llm_score('gpt-4-llm', brand, keyword)
         p_score = self._popularity(brand, keyword) 
         
         combined = g_score * self.gemini_w + c_score * self.gpt4_w + p_score * self.pop_w
         return {
             'Brand': brand,
             'Keyword': keyword,
-            'Gemini-Trends': round(g_score,1), # Renamed for clarity that it's LLM + Trends
-            'GPT-4-Trends':  round(c_score,1), # Renamed for clarity
-            'Google Trends Search Interest': round(p_score,1), # More descriptive name
+            'Gemini LLM Score': round(g_score,1), # More descriptive name
+            'GPT-4 LLM Score':  round(c_score,1), # More descriptive name
+            'Google Trends Search Interest': round(p_score,1), 
             'Combined Score':   round(combined,1)
         }
 
@@ -172,9 +194,9 @@ kws_in    = st.text_input("Enter Keywords (comma-separated)", "new trainers, ice
 st.subheader("Scoring Weights")
 col1, col2, col3 = st.columns(3)
 with col1:
-    gem_w = st.slider("Gemini-1.5-Flash Weight", 0.0, 1.0, 0.4, help="Weight for Google Gemini's relevance assessment.")
+    gem_w = st.slider("Gemini LLM Weight", 0.0, 1.0, 0.4, help="Weight for Google Gemini's relevance assessment.")
 with col2:
-    gpt_w = st.slider("GPT-4o Weight", 0.0, 1.0, 0.4, help="Weight for OpenAI GPT-4o's relevance assessment.")
+    gpt_w = st.slider("GPT-4 LLM Weight", 0.0, 1.0, 0.4, help="Weight for OpenAI GPT-4's relevance assessment.")
 with col3:
     pop_w = st.slider("Google Trends Weight", 0.0, 1.0, 0.2, help="Weight for Google Trends search interest data. This reflects public popularity.")
 
@@ -212,7 +234,7 @@ if st.button("Compute Scores"):
                 current_iteration += 1
                 progress_bar.progress(current_iteration / total_iterations, text=f"Processing: Brand '{brand}', Keyword '{kw}' ({current_iteration}/{total_iterations})")
                 
-                # Small delay after each pair to mitigate rate limits (especially for LLMs)
+                # Small delay after each pair to mitigate overall rate limits, not just pytrends specific
                 time.sleep(0.1) 
         
         progress_bar.empty() # Remove progress bar once done
@@ -234,8 +256,8 @@ if st.button("Compute Scores"):
         st.subheader("Detailed Scores")
         # Rename columns for better display in the table
         df_display = df.rename(columns={
-            'Gemini-Trends': 'Gemini LLM',
-            'GPT-4-Trends': 'GPT-4 LLM',
+            'Gemini LLM Score': 'Gemini LLM',
+            'GPT-4 LLM Score': 'GPT-4 LLM',
             'Google Trends Search Interest': 'Google Trends'
         })
         st.dataframe(df_display.set_index(['Brand', 'Keyword']))
