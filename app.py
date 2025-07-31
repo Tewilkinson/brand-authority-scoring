@@ -125,3 +125,7 @@ if st.button("Compute Scores"):
     fig = px.bar(df, x='Keyword', y='Combined', color='Brand', barmode='group',
                  labels={'Combined':'Score (0-100)'}, title='Combined Relevance Scores')
     st.plotly_chart(fig, use_container_width=True)
+    
+    # Display detailed scores table
+    st.subheader("Detailed Scores by Model and Combined")
+    st.table(df.set_index(['Brand','Keyword']))
