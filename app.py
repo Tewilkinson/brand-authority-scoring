@@ -84,7 +84,6 @@ brands_in = st.text_input(
     help="Enter brands separated by commas"
 )
 # Input: keywords (one per line)
-# Input: keywords (one per line)
 keywords_in = st.text_area(
     "Keywords (one per line)",
     """new trainers
@@ -92,15 +91,9 @@ ice cream
 photography""",
     height=120,
     help="Enter each keyword or topic on its own line"
-)",
-    "new trainers
-ice cream
-photography",
-    height=120,
-    help="Enter each keyword or topic on its own line"
 )
 
-gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5)
+gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5)("Gemini-Pro weight", 0.0, 1.0, 0.5)
 gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.5)
 
 if st.button("Compute Relevance Scores"):
