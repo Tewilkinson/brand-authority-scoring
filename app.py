@@ -84,8 +84,15 @@ brands_in = st.text_input(
     help="Enter brands separated by commas"
 )
 # Input: keywords (one per line)
+# Input: keywords (one per line)
 keywords_in = st.text_area(
     "Keywords (one per line)",
+    """new trainers
+ice cream
+photography""",
+    height=120,
+    help="Enter each keyword or topic on its own line"
+)",
     "new trainers
 ice cream
 photography",
