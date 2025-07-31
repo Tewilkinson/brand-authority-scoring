@@ -67,40 +67,40 @@ class RelevanceScorer:
         gpt4_score  = self._llm_score('gpt-4',      brand, keyword)
         combined    = gemini_score * self.gemini_w + gpt4_score * self.gpt4_w
         return {
-            'Brand':        brand,
-            'Keyword':      keyword,
-            'Gemini-Pro':   round(gemini_score, 1),
-            'GPT-4':        round(gpt4_score, 1),
-            'Combined':     round(combined, 1)
+            'Brand':      brand,
+            'Keyword':    keyword,
+            'Gemini-Pro': round(gemini_score, 1),
+            'GPT-4':      round(gpt4_score, 1),
+            'Combined':   round(combined, 1)
         }
 
 # Streamlit App
 st.title("Brand vs. Topic Relevance: GPT-4 + Gemini-Pro")
 
-brands_in = st.text_input("Brands (comma-separated)",  "Nike, Adidas, Puma")
-kws_in    = st.text_input("Keywords (comma-separated)", "new trainers, ice cream")
+# Input: brands comma-separated, keywords space-separated
+brands_in = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
+keywords_in = st.text_input("Keywords (space-separated)", "new trainers ice cream photography")
 
 gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5)
 gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.5)
 
 if st.button("Compute Relevance Scores"):
+    # Parse inputs
     brands  = [b.strip() for b in brands_in.split(',') if b.strip()]
-    kws     = [k.strip() for k in kws_in.split(',')    if k.strip()]
-    scorer  = RelevanceScorer(gemini_w=gem_w, gpt4_w=gpt_w)
-    rows    = []
+    keywords = [k.strip() for k in keywords_in.split() if k.strip()]
+
+    scorer = RelevanceScorer(gemini_w=gem_w, gpt4_w=gpt_w)
+    rows = []
     for brand in brands:
-        for keyword in kws:
+        for keyword in keywords:
             rows.append(scorer.score(brand, keyword))
     df = pd.DataFrame(rows)
 
     # Grouped Bar Chart
     fig = px.bar(
         df,
-        x='Keyword',
-        y='Combined',
-        color='Brand',
-        barmode='group',
-        title='Combined Relevance Scores by Keyword and Brand'
+        x='Keyword', y='Combined', color='Brand',
+        barmode='group', title='Combined Relevance Scores by Keyword and Brand'
     )
     fig.update_layout(yaxis_title='Score (0-100)', xaxis_title='')
     st.plotly_chart(fig, use_container_width=True)
