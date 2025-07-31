@@ -15,7 +15,9 @@ import time # For rate limiting and exponential backoff
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta") # Default for AI Studio
+# Default for Google AI Studio. CHANGE THIS if you're using Vertex AI or a different endpoint.
+GEMINI_API_BASE = os.getenv("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta")
+
 
 if not OPENAI_API_KEY:
     st.error("Please set the OPENAI_API_KEY environment variable.")
@@ -24,41 +26,17 @@ if not OPENAI_API_KEY:
 # Initialize OpenAI client for GPT models
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Initialize Gemini client using the base_url
+# Initialize Gemini client
 gemini_client = None
 if GEMINI_API_KEY:
     try:
-        # Use base_url for non-OpenAI endpoints when using the OpenAI library
+        # Using base_url to point the OpenAI client to Google's Gemini API endpoint
         gemini_client = OpenAI(api_key=GEMINI_API_KEY, base_url=GEMINI_API_BASE)
-        
-        # --- IMPORTANT: VERIFY THIS GEMINI MODEL NAME ---
-        # Go to Google AI Studio or Vertex AI and check the exact deployed model name.
-        # Common options: "gemini-1.5-flash", "gemini-1.5-flash-001", "gemini-1.5-flash-002", "gemini-1.5-pro", "gemini-1.5-pro-001"
-        TEST_GEMINI_MODEL = "gemini-1.5-flash" # <--- **ADJUST THIS BASED ON YOUR ACCESS**
-        
-        # Attempt to list models to confirm connection and access
-        # This is a good health check
-        try:
-            available_models = gemini_client.models.list()
-            found_gemini_model = False
-            for model_obj in available_models:
-                if model_obj.id == TEST_GEMINI_MODEL:
-                    found_gemini_model = True
-                    break
-            
-            if found_gemini_model:
-                st.success(f"Successfully initialized and verified access to Gemini model: {TEST_GEMINI_MODEL}")
-            else:
-                st.warning(f"Connected to Gemini API but model '{TEST_GEMINI_MODEL}' not found or accessible. Please check model name and permissions.")
-                st.warning("Falling back to GPT-4 for Gemini scores.")
-                gemini_client = client # Fallback to OpenAI client
-        except Exception as e:
-            st.warning(f"Could not verify Gemini model access (error: {e}). Falling back to GPT-4 for Gemini scores. Check GEMINI_API_BASE and API Key.")
-            gemini_client = client # Fallback if model listing fails
-            
+        st.success("Gemini client initialized. Attempting to use Gemini.")
     except Exception as e:
-        st.error(f"Error initializing Gemini client: {e}. Ensure GEMINI_API_KEY and GEMINI_API_BASE are correct.")
-        gemini_client = client # Fallback if initialization itself fails
+        st.error(f"Error initializing Gemini client: {e}. Please check GEMINI_API_KEY and GEMINI_API_BASE.")
+        st.warning("Falling back to GPT-4 for Gemini scores as Gemini initialization failed.")
+        gemini_client = client # Fallback if initialization fails
 else:
     st.warning("GEMINI_API_KEY not set. Gemini scores will use GPT-4 as a fallback.")
     gemini_client = client
@@ -75,8 +53,8 @@ class RelevanceScorer:
         self.pop_w     = pop_w     / total if total else 0
         
         # Initialize pytrends once per scorer instance
-        # tz=360 for UTC-6. Adjust hl (host language) and tz (timezone) as needed.
-        # Removing retries and backoff_factor from here as we're doing custom handling
+        # Ensure pytrends is initialized without 'retries' or 'backoff_factor' here,
+        # as we are handling retries manually.
         self.pytrends = TrendReq(hl='en-US', tz=360) 
 
 
@@ -91,18 +69,21 @@ class RelevanceScorer:
 
         if "gemini" in model_alias.lower():
             client_to_use = gemini_client
-            # --- IMPORTANT: ENSURE THIS IS THE CORRECT, ACCESSIBLE GEMINI MODEL ---
-            actual_model_name = "gemini-1.5-flash" # <--- **ADJUST THIS IF NEEDED**
+            # --- IMPORTANT: **VERIFY THIS MODEL NAME IN YOUR GOOGLE AI STUDIO/CLOUD CONSOLE** ---
+            # If 'gemini-pro' worked before, try it. Otherwise, use the *exact* versioned name.
+            # E.g., "gemini-1.0-pro", "gemini-1.5-flash-002", etc.
+            actual_model_name = "gemini-pro" # Reverting to your original working model alias
         elif "gpt-4" in model_alias.lower():
             client_to_use = client # This is your OpenAI client for GPT-4
-            actual_model_name = "gpt-4o" # Or "gpt-4-turbo", "gpt-4" - **ADJUST AS PER YOUR OPENAI ACCESS**
+            actual_model_name = "gpt-4o" # Or "gpt-4-turbo", "gpt-4" - ADJUST AS PER YOUR OPENAI ACCESS
         else:
             st.error(f"Unsupported LLM model alias: {model_alias}")
             return 0.0
 
         if client_to_use is None:
-            return 0.0 # This should be caught by the initialization health check
-
+             st.error(f"LLM client for {model_alias} is not initialized.")
+             return 0.0
+            
         try:
             resp = client_to_use.chat.completions.create(
                 model=actual_model_name,
@@ -131,19 +112,15 @@ class RelevanceScorer:
 
         for attempt in range(max_retries):
             try:
-                # Build payload for the term
+                # Use 'today 12-m' for more stable data over a year.
                 # timeframe='today 3-m' for last 3 months, 'today 12-m' for last 12 months
-                # cat=0 means 'All Categories', geo='' means 'Worldwide'
-                self.pytrends.build_payload([term], cat=0, timeframe='today 3-m', geo='')
+                self.pytrends.build_payload([term], cat=0, timeframe='today 12-m', geo='')
                 
-                # Get interest over time
                 df_trend = self.pytrends.interest_over_time()
 
                 if df_trend.empty or term not in df_trend.columns:
-                    # If no data, it means low or no search interest for the term
                     return 0.0
                 
-                # Google Trends already returns values on a 0-100 scale.
                 score = float(df_trend[term].iloc[-1])
                 return score
             except Exception as e:
@@ -156,7 +133,7 @@ class RelevanceScorer:
                 elif "method_whitelist" in error_message:
                     st.error(f"[Google Trends] Compatibility error with urllib3 for '{term}'. "
                              f"Please run `pip install \"urllib3<2\"` in your terminal and restart the app. Error: {error_message}")
-                    return 0.0 # Stop trying for this specific error
+                    return 0.0 # Stop trying for this specific error, it needs a package fix
                 else:
                     st.error(f"[Google Trends] Unhandled error fetching '{term}': {error_message}")
                     return 0.0 # Return 0 for other errors
@@ -166,9 +143,8 @@ class RelevanceScorer:
 
 
     def score(self, brand: str, keyword: str) -> dict:
-        # Use a specific Gemini model name alias for the call
+        # Using model aliases for clarity in _llm_score
         g_score = self._llm_score('gemini-llm', brand, keyword) 
-        # Use a specific GPT-4 model name alias for the call
         c_score = self._llm_score('gpt-4-llm', brand, keyword)
         p_score = self._popularity(brand, keyword) 
         
@@ -234,7 +210,7 @@ if st.button("Compute Scores"):
                 current_iteration += 1
                 progress_bar.progress(current_iteration / total_iterations, text=f"Processing: Brand '{brand}', Keyword '{kw}' ({current_iteration}/{total_iterations})")
                 
-                # Small delay after each pair to mitigate overall rate limits, not just pytrends specific
+                # Small delay after each pair to mitigate overall rate limits
                 time.sleep(0.1) 
         
         progress_bar.empty() # Remove progress bar once done
@@ -244,7 +220,6 @@ if st.button("Compute Scores"):
         
         # Display Results
         st.subheader("Combined Relevance Scores Overview")
-        # Ensure column names match for plotting
         fig = px.bar(
             df,
             x='Keyword', y='Combined Score', color='Brand',
@@ -254,7 +229,6 @@ if st.button("Compute Scores"):
         st.plotly_chart(fig, use_container_width=True)
         
         st.subheader("Detailed Scores")
-        # Rename columns for better display in the table
         df_display = df.rename(columns={
             'Gemini LLM Score': 'Gemini LLM',
             'GPT-4 LLM Score': 'GPT-4 LLM',
