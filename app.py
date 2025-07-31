@@ -133,14 +133,22 @@ if st.button("Compute Scores"):
         gpt_w,
         pop_w if enable_trends else 0.0
     )
+    # Accumulate scores
     rows = []
-        for b in brands:
+    for b in brands:
         for k in kws:
             rows.append(scorer.score(b, k))
-    df = pd.DataFrame(rows)(rows)
+    # Build DataFrame
+    df = pd.DataFrame(rows)
+
     # Grouped bar chart
-    fig = px.bar(df, x='Keyword', y='Combined', color='Brand', barmode='group',
-                 labels={'Combined':'Score (0-100)'}, title='Combined Relevance Scores')
+    fig = px.bar(
+        df,
+        x='Keyword', y='Combined', color='Brand',
+        barmode='group',
+        labels={'Combined':'Score (0-100)'},
+        title='Combined Relevance Scores'
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     # Display detailed scores table
