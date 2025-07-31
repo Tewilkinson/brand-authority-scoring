@@ -107,7 +107,11 @@ st.title("Brand vs. Topic Authority: LLM + Trends")
 brands_in   = st.text_input("Brands (comma-separated)",  "Nike, Adidas, Puma")
 kws_in      = st.text_input("Keywords (comma-separated)", "new trainers, ice cream")
 
-# Weights
+# Weights / Options
+enable_trends = st.checkbox("Include Google Trends data", value=True, help="Toggle to use Trends for popularity signal")
+gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.4)
+gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.4)
+pop_w = st.slider("Trends weight",      0.0, 1.0, 0.2)("Trends weight",      0.0, 1.0, 0.2)
 gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.4)
 gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.4)
 pop_w = st.slider("Trends weight",      0.0, 1.0, 0.2)
