@@ -77,9 +77,21 @@ class RelevanceScorer:
 # Streamlit App
 st.title("Brand vs. Topic Relevance: GPT-4 + Gemini-Pro")
 
-# Input: brands comma-separated, keywords space-separated
-brands_in = st.text_input("Brands (comma-separated)", "Nike, Adidas, Puma")
-keywords_in = st.text_input("Keywords (space-separated)", "new trainers ice cream photography")
+# Input: brands comma-separated
+brands_in = st.text_input(
+    "Brands (comma-separated)",
+    "Nike, Adidas, Puma",
+    help="Enter brands separated by commas"
+)
+# Input: keywords (one per line)
+keywords_in = st.text_area(
+    "Keywords (one per line)",
+    "new trainers
+ice cream
+photography",
+    height=120,
+    help="Enter each keyword or topic on its own line"
+)
 
 gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.5)
 gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.5)
