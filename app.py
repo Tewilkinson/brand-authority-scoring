@@ -70,11 +70,27 @@ class RelevanceScorer:
                     return 0.0
             return 0.0
 
-    def _popularity(self, brand: str, keyword: str) -> float:
+        def _popularity(self, brand: str, keyword: str) -> float:
         """
         Uses Google Trends (last 30 days) to return normalized 0-100 interest.
+        Prints debug info to Streamlit.
         """
         if not TRENDS_AVAILABLE:
+            st.warning("PyTrends not installed; Trends disabled.")
+            return 0.0
+        term = f"{brand} {keyword}"
+        try:
+            tr = TrendReq(hl='en-US', tz=0)
+            tr.build_payload([term], timeframe='today 30-d')
+            df_trend = tr.interest_over_time()
+            if df_trend.empty:
+                st.info(f"[Trends] No data for '{term}'")
+                return 0.0
+            value = float(df_trend[term].iloc[-1])
+            st.write(f"[Trends] '{term}' last value: {value}")
+            return value
+        except Exception as e:
+            st.error(f"[Trends] Error fetching '{term}': {e}")
             return 0.0
         try:
             tr = TrendReq(hl='en-US', tz=0)
