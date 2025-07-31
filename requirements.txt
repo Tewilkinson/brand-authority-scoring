@@ -1,7 +1,4 @@
 streamlit
 openai
-numpy
 pandas
-wikipedia
-pytrends
 plotly
