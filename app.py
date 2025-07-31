@@ -108,20 +108,34 @@ brands_in   = st.text_input("Brands (comma-separated)",  "Nike, Adidas, Puma")
 kws_in      = st.text_input("Keywords (comma-separated)", "new trainers, ice cream")
 
 # Weights / Options
-enable_trends = st.checkbox("Include Google Trends data", value=True, help="Toggle to use Trends for popularity signal")
-gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.4)
-gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.4)
-pop_w = st.slider("Trends weight",      0.0, 1.0, 0.2)("Trends weight",      0.0, 1.0, 0.2)
-gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.4)
-gpt_w = st.slider("GPT-4 weight",       0.0, 1.0, 0.4)
-pop_w = st.slider("Trends weight",      0.0, 1.0, 0.2)
+enable_trends = st.checkbox(
+    "Include Google Trends data", value=True,
+    help="Toggle to include Trends as popularity signal"
+)
+gem_w = st.slider(
+    "Gemini-Pro weight", 0.0, 1.0, 0.4,
+    help="Relative weight for Gemini‑Pro score"
+)
+gpt_w = st.slider(
+    "GPT-4 weight", 0.0, 1.0, 0.4,
+    help="Relative weight for GPT‑4 score"
+)
+pop_w = st.slider(
+    "Trends weight", 0.0, 1.0, 0.2,
+    help="Relative weight for Trends score"
+)
 
 if st.button("Compute Scores"):
     brands = [b.strip() for b in brands_in.split(',') if b.strip()]
-    kws    = [k.strip() for k in kws_in.split(',')    if k.strip()]
-    scorer = RelevanceScorer(gem_w, gpt_w, pop_w)
+    kws    = [k.strip() for k in kws_in.split(',') if k.strip()]
+    scorer = RelevanceScorer(
+        gem_w,
+        gpt_w,
+        pop_w if enable_trends else 0.0
+    )
     rows = []
     for b in brands:
+        for k in kws:
         for k in kws:
             rows.append(scorer.score(b, k))
     df = pd.DataFrame(rows)
