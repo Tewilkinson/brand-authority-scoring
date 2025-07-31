@@ -5,4 +5,4 @@ pandas
 wikipedia
 pytrends
 plotly
-urllib3
+urllib2
