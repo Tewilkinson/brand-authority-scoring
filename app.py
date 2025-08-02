@@ -9,8 +9,8 @@ from openai import OpenAI
 OPENAI_API_KEY       = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY       = os.getenv("GEMINI_API_KEY")
 GEMINI_API_BASE      = os.getenv("GEMINI_API_BASE")
-DATAFORESEO_USERNAME = os.getenv("DATAFORESEO_USERNAME")
-DATAFORESEO_PASSWORD = os.getenv("DATAFORESEO_PASSWORD")
+DATAFORESEO_USERNAME = st.secrets["DATAFORESEO_USERNAME"]
+DATAFORESEO_PASSWORD = st.secrets["DATAFORESEO_PASSWORD"]
 
 if not OPENAI_API_KEY:
     st.error("Please set the OPENAI_API_KEY environment variable.")
