@@ -95,4 +95,59 @@ class RelevanceScorer:
             'Combined': round(combined,1)
         }
 
-# Streamlit UI omitted for brevity
+# Streamlit App UI
+st.title("Brand vs. Topic Relevance: LLM + Search Volume Share")
+
+# Weight sliders
+col1, col2, col3 = st.columns(3)
+with col1:
+    gem_w = st.slider("Gemini-Pro weight", 0.0, 1.0, 0.3)
+with col2:
+    gpt_w = st.slider("GPT-4 weight", 0.0, 1.0, 0.3)
+with col3:
+    vol_w = st.slider("Volume Share weight", 0.0, 1.0, 0.4)
+
+# Inputs
+brands_input = st.text_input(
+    "Brands (comma-separated)",
+    "Nike, Adidas, Puma",
+    help="Enter brands separated by commas"
+)
+
+keywords_input = st.text_area(
+    "Keywords (one per line)",
+    """new trainers
+ice cream
+photography""",
+    height=150,
+    help="Enter each keyword or topic on its own line"
+)
+
+if st.button("Compute Relevance Scores"):
+    brands = [b.strip() for b in brands_input.split(',') if b.strip()]
+    keywords = [k.strip() for k in keywords_input.splitlines() if k.strip()]
+    if not brands or not keywords:
+        st.warning("Please enter at least one brand and one keyword.")
+    else:
+        scorer = RelevanceScorer(gem_w, gpt_w, vol_w)
+        rows = []
+        for brand in brands:
+            for keyword in keywords:
+                rows.append(scorer.score(brand, keyword))
+        df = pd.DataFrame(rows)
+
+        # Combined Scores Chart
+        fig = px.bar(
+            df,
+            x='Keyword',
+            y='Combined',
+            color='Brand',
+            barmode='group',
+            title='Combined Relevance Scores by Keyword and Brand'
+        )
+        fig.update_layout(yaxis_title='Score (0-100)', xaxis_title='')
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Detailed Table
+        st.subheader("Detailed Scores and Volume Metrics")
+        st.table(df.set_index(['Brand', 'Keyword']))
